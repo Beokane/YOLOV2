@@ -1,0 +1,22 @@
+# 模型配置
+model:
+  backbone: "darknet19"
+  anchors: [1.08,1.19, 3.42,4.41, 6.63,11.38, 9.42,5.11, 16.62,10.52]  # 5个先验框(w,h)
+  num_classes: 20
+  input_size: 416
+
+# 训练配置
+train:
+  batch_size: 16
+  epochs: 160
+  lr: 0.001
+  momentum: 0.9
+  weight_decay: 0.0005
+  checkpoint_dir: "checkpoints/"
+  log_dir: "logs/"
+
+# 数据配置
+data:
+  train_path: "data/voc/train.txt"  # 每行: image_path box1 box2...
+  val_path: "data/voc/val.txt"
+  class_names: ["aeroplane", "bicycle", ..., "pottedplant", "sheep", "sofa", "train", "tvmonitor"]

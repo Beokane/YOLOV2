@@ -1,0 +1,74 @@
+# Faster R-CNN 配置文件 (YAML格式)
+# ================================
+# 基础配置
+# ================================
+config: /home/oem/MachineLearning/detect/configs/faster_rcnn.yaml
+seed: 42
+device: "cuda"  # "cuda" 或 "cpu"
+num_workers: 4   # 数据加载线程数
+amp: True        # 是否启用自动混合精度训练
+
+# ================================
+# 数据配置
+# ================================
+train_img_dir: "/path/to/coco/train2017"
+train_ann_file: "/path/to/coco/annotations/instances_train2017.json"
+val_img_dir: "/path/to/coco/val2017"
+val_ann_file: "/path/to/coco/annotations/instances_val2017.json"
+
+# 输入图像尺寸 (短边调整)
+min_size: 800    # 训练时随机从[400,500,600,700,800]选择
+max_size: 1333   # 长边最大限制
+
+# 数据增强
+hflip_prob: 0.5  # 水平翻转概率
+pixel_mean: [0.485, 0.456, 0.406]  # ImageNet均值
+pixel_std: [0.229, 0.224, 0.225]   # ImageNet标准差
+
+# ================================
+# 模型配置
+# ================================
+name: "faster_rcnn"
+backbone: "resnet50"  # 可选: "resnet50", "mobilenet_v2"
+num_classes: 91       # COCO是80类+背景
+
+# RPN参数
+rpn_pre_nms_top_n: 2000
+rpn_post_nms_top_n: 1000
+rpn_nms_thresh: 0.7
+rpn_fg_iou_thresh: 0.7
+rpn_bg_iou_thresh: 0.3
+
+# ROI Head参数
+box_score_thresh: 0.05   # 初始分数阈值
+box_nms_thresh: 0.5      # NMS阈值
+box_detections_per_img: 100  # 每张图最大检测数
+box_fg_iou_thresh: 0.5
+box_bg_iou_thresh: 0.5
+
+# ================================
+# 训练配置
+# ================================
+
+batch_size: 4      # 根据GPU显存调整
+epochs: 26         # 总训练轮次
+lr: 0.02           # 基础学习率
+momentum: 0.9
+weight_decay: 0.0001
+lr_steps: [16, 22] # 学习率衰减步长
+lr_gamma: 0.1      # 学习率衰减系数
+
+# 梯度裁剪
+clip_grad_norm: 10.0
+
+# 模型保存
+save_dir: "./checkpoints"
+save_interval: 1   # 每隔多少epoch保存一次
+log_dir: "./logs"   # TensorBoard日志目录
+
+# ================================
+# 验证配置
+# ================================
+
+score_threshold: 0.5  # 验证时分数阈值
+map_iou_thresholds: [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]  # mAP计算IOU阈值
