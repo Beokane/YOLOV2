@@ -182,36 +182,24 @@ def validate(model, args, config, dataloader):
         with tqdm(dataloader, desc='Validation', unit='batch') as pbar:
             for images, b_targets in pbar:
                 images = images.to(args.device)
-                # print(images.shape)
                 targets = [targets.tolist() for targets in b_targets]
-                # targets = gt_creator(
-                #     input_size=args.train_size,
-                #     stride=config['stride'],
-                #     label_lists=targets,
-                #     anchor_size=config['anchor_size'][args.dataset],
-                #     ignore_thresh=config['ignore_thresh']
-                # )
-                # targets = torch.tensor(
-                #     targets, dtype=torch.float32).to(args.device)
-
                 # 前向传播
                 outputs = model(images)
-
                 # 分离结果
                 B, H, W, _, C = outputs.shape
                 conf_pred = outputs[..., 0:1].contiguous().view(B, -1, 1)
                 cls_pred = outputs[..., 1: C-4].contiguous().view(B, -1, C-5)
                 txtytwth_pred = outputs[..., C-4:].contiguous().view(B, -1, 4)
+
                 anchors_size = torch.tensor(config['anchor_size'][args.dataset])
                 anchors = create_grid(config['stride'], args.train_size, anchors_size).to(args.device)
+            
                 # 计算解码边界框的窗格信息
                 result = postprocess(conf_pred, cls_pred, txtytwth_pred, config['stride'], args.train_size,
                                                      anchors, 0.5, len(DETECTION_CLASSES), 1000)
                 # 计算mAP
                 map = calculate_map(result, targets)
-                
         return map
-
 
 def check_nan_hook(module, input, output):
     if torch.is_tensor(output):

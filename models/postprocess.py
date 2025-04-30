@@ -9,9 +9,9 @@ def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf
         conf_pred: (Tensor) [H*W*KA, 1]
         cls_pred:  (Tensor) [H*W*KA, C]
         reg_pred:  (Tensor) [H*W*KA, 4]
+        anchors:   (Tensor) [H*W*KA, 4]
     """
     # print(anchors.shape)
-    # (H x W x KA x C,)
     batch_size = conf_pred.size(0)
     results = []
     for i in range(batch_size):
@@ -19,8 +19,7 @@ def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf
         conf_b = conf_pred[i].clone()
         cls_b = cls_pred[i].clone()
         reg_b = reg_pred[i].clone()
-        scores = (torch.sigmoid(conf_b) *
-                torch.softmax(cls_b, dim=-1)).flatten()
+        scores = (torch.sigmoid(conf_b) * torch.softmax(cls_b, dim=-1)).flatten()
 
         # Keep top k top scoring indices only.
         num_topk = min(topk, reg_b.size(0))
@@ -41,7 +40,7 @@ def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf
         reg_b = reg_b[anchor_idxs]
         cur_anchors = cur_anchors[anchor_idxs]
 
-        # 解算边界框, 并归一化边界框: [H*W*KA, 4]
+        # 解算边界框, 并归一化边界框: [n, 4]
         bboxes = decode_boxes(stride, cur_anchors, reg_b)
 
         # to cpu

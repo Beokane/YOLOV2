@@ -63,24 +63,26 @@ def decode_boxes(stride, anchors, txtytwth_pred):
 
     return x1y1x2y2_pred
 
-def create_grid(stride, input_size, anchors):
-    anchors = anchors.clone()
+def create_grid(stride, input_size, anchors_size):
+    '''
+    生成网格
+    Input: \n
+        stride: 步长 \n
+        input_size: 输入图像的大小 \n
+        anchors: 先验框的大小（相对与网格的宽高） \n
+    Output: \n
+        anchor_grids: 网格 \n
+            [H*W*KA, 4] \n
+    '''
+    cur_anchors_size = anchors_size.clone()
     w, h = input_size, input_size
     # 生成G矩阵
     fmp_w, fmp_h = w // stride, h // stride
-    grid_y, grid_x = torch.meshgrid(
-        [torch.arange(fmp_h), torch.arange(fmp_w)])
-    # [H, W, 2] -> [HW, 2]
-    grid_xy = torch.stack([grid_x, grid_y], dim=-1).float().view(-1, 2)
-    # [HW, 2] -> [HW, 1, 2] -> [HW, KA, 2]
-    grid_xy = grid_xy[:, None, :].repeat(1, len(anchors), 1)
-
-    # [KA, 2] -> [1, KA, 2] -> [HW, KA, 2]
-    anchor_wh = anchors[None, :, :].repeat(fmp_h*fmp_w, 1, 1)
-
-    # [HW, KA, 4] -> [M, 4]
-    anchor_grids = torch.cat([grid_xy, anchor_wh], dim=-1)
-    anchor_grids = anchor_grids.view(-1, 4)
+    grid_y, grid_x = torch.meshgrid([torch.arange(fmp_h), torch.arange(fmp_w)])  # [H, W]
+    grid_xy = torch.stack([grid_x, grid_y], dim=-1).float().view(-1, 2)  # [H, W, 2]->[HW, 2]
+    grid_xy = grid_xy[:, None, :].repeat(1, len(cur_anchors_size), 1)    # [HW, 2]->[HW, 1, 2]->[HW, KA, 2]
+    anchor_wh = cur_anchors_size[None, :, :].repeat(fmp_h*fmp_w, 1, 1)  # [KA, 2]->[1, KA, 2]->[HW, KA, 2]
+    anchor_grids = torch.cat([grid_xy, anchor_wh], dim=-1).view(-1, 4)  # [HW, KA, 4]->[M, 4]
     return anchor_grids
 
 # We use ignore thresh to decide which anchor box can be kept.
@@ -93,7 +95,6 @@ def compute_iou(anchor_boxes, gt_box):
     Output: \n
                 iou : [K,] \n
     """
-
     # anchor box :
     ab_x1y1_x2y2 = np.zeros([len(anchor_boxes), 4])
     # 计算先验框的左上角点坐标和右下角点坐标
@@ -104,7 +105,7 @@ def compute_iou(anchor_boxes, gt_box):
     w_ab, h_ab = anchor_boxes[:, 2], anchor_boxes[:, 3]
     
     # gt_box : 
-    # 我们将真实框扩展成[K, 4], 便于计算IoU. 
+    # 我们将真实框扩展成[K, 4], 便于计算IoU
     gt_box_expand = np.repeat(gt_box, len(anchor_boxes), axis=0)
 
     gb_x1y1_x2y2 = np.zeros([len(anchor_boxes), 4])
@@ -128,8 +129,8 @@ def compute_iou(anchor_boxes, gt_box):
 
 
 def set_anchors(anchor_size):
-    """将输入进来的只包含wh的先验框尺寸转换成[N, 4]的ndarray类型，
-       包含先验框的中心点坐标和宽高wh，中心点坐标设为0. \n
+    """将输入进来的只包含wh的先验框尺寸转换成[N, 4]的ndarray类型,
+       包含先验框的中心点坐标和宽高wh,中心点坐标设为0. \n
     Input: \n
         anchor_size: list -> [[h_1, w_1],  \n
                               [h_2, w_2],  \n

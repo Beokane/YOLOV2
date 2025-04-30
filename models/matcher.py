@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 
 
 def compute_iou(anchor_boxes, gt_box):
@@ -44,8 +43,8 @@ def compute_iou(anchor_boxes, gt_box):
 
 
 def set_anchors(anchor_size):
-    """将输入进来的只包含wh的先验框尺寸转换成[N, 4]的ndarray类型，
-       包含先验框的中心点坐标和宽高wh，中心点坐标设为0. \n
+    """将输入进来的只包含wh的先验框尺寸转换成[N, 4]的ndarray类型,
+       包含先验框的中心点坐标和宽高wh,中心点坐标设为0. \n
     Input: \n
         anchor_size: list -> [[h_1, w_1],  \n
                               [h_2, w_2],  \n
@@ -62,9 +61,7 @@ def set_anchors(anchor_size):
     for index, size in enumerate(anchor_size): 
         anchor_w, anchor_h = size
         anchor_boxes[index] = np.array([0, 0, anchor_w, anchor_h])
-    
     return anchor_boxes
-
 
 def generate_txtytwth(gt_label, w, h, s, anchor_size, ignore_thresh):
     # gt_label: [xmin, ymin, xmax, ymax, class_id]
@@ -85,11 +82,9 @@ def generate_txtytwth(gt_label, w, h, s, anchor_size, ignore_thresh):
     # 计算中心点所落在的网格的坐标
     grid_x = int(c_x_s)
     grid_y = int(c_y_s)
-    # 获得先验框的中心点坐标和宽高，
-    # 这里，我们设置所有的先验框的中心点坐标为0
+    # 忽略中心点的偏移，直接使用标签和先验框的宽高匹配策略。后续可通过回归方式修正。
     anchor_boxes = set_anchors(anchor_size)
     gt_box = np.array([[0, 0, box_ws, box_hs]])
-    # 计算先验框和真实框之间的IoU
     iou = compute_iou(anchor_boxes, gt_box)
     # 只保留大于ignore_thresh的先验框去做正样本匹配,
     iou_mask = (iou > ignore_thresh)
@@ -104,6 +99,12 @@ def generate_txtytwth(gt_label, w, h, s, anchor_size, ignore_thresh):
         tw = np.log(box_ws / p_w)
         th = np.log(box_hs / p_h)
         weight = 2.0 - (box_w / w) * (box_h / h)
+        # index 是先验框的索引（0-4）
+        # grid_x, grid_y 是中心点所在的网格坐标（13，13）
+        # tx, ty 是中心点的偏移量
+        # tw, th 是标签的相对网格宽高与最匹配先验框的网格宽高的比值的对数
+        # weight 是权重， 2.0 - 归一化标签的面积
+        # xmin, ymin, xmax, ymax 是归一化后角点坐标
         result.append([index, grid_x, grid_y, tx, ty, tw, th, weight, xmin, ymin, xmax, ymax])    
         return result  
     else:
@@ -127,6 +128,10 @@ def generate_txtytwth(gt_label, w, h, s, anchor_size, ignore_thresh):
         return result 
 
 def gt_creator(input_size, stride, label_lists, anchor_size, ignore_thresh):
+    '''
+    相当于给每张图像上的每个网格的每个先验框附上标签，包括标签的类别、是否为正样本、
+    中心点的偏移量、宽高的偏移量、权重等。
+    '''
     # 必要的参数
     # label_Lists shape: batch_size, num_bbox, 4+1
     batch_size = len(label_lists)
