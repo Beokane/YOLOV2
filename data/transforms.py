@@ -333,7 +333,7 @@ class VOCAnnotationTransform(object):
         width (int): width
     """
 
-    def __init__(self, class_to_ind=None, keep_difficult=False):
+    def __init__(self, keep_difficult=False):
         self.keep_difficult = keep_difficult
         self.class_to_ind = dict()
     

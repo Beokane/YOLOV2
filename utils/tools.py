@@ -2,6 +2,86 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from utils.metrics import iou_score
+
+def nms(bboxes, scores, nms_thresh=0.50):
+    """"Pure Python NMS baseline."""
+    eps = 1e-6
+    x1 = bboxes[:, 0]  #xmin
+    y1 = bboxes[:, 1]  #ymin
+    x2 = bboxes[:, 2]  #xmax
+    y2 = bboxes[:, 3]  #ymax
+
+    areas = (x2 - x1) * (y2 - y1)
+    order = scores.argsort()[::-1]
+    
+    keep = []                                             
+    while order.size > 0:
+        i = order[0]
+        keep.append(i)
+        # 计算交集的左上角点和右下角点的坐标
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        # 计算交集的宽高
+        w = np.maximum(1e-10, xx2 - xx1)
+        h = np.maximum(1e-10, yy2 - yy1)
+        # 计算交集的面积
+        inter = w * h
+
+        # 计算交并比
+        iou = inter / (areas[i] + areas[order[1:]] + eps - inter)
+        # 滤除超过nms阈值的检测框
+        inds = np.where(iou <= nms_thresh)[0]
+        order = order[inds + 1]
+
+    return keep
+
+def decode_boxes(stride, anchors, txtytwth_pred):
+    """将txtytwth预测换算成边界框的左上角点坐标和右下角点坐标 \n
+        Input: \n
+            txtytwth_pred : [B, H*W*KA, 4] \n
+        Output: \n
+            x1y1x2y2_pred : [B, H*W*KA, 4] \n
+    """
+    # 获得边界框的中心点坐标和宽高
+    # b_x = sigmoid(tx) + grid_x
+    # b_y = sigmoid(ty) + grid_y
+    xy_pred = torch.sigmoid(txtytwth_pred[..., :2]) + anchors[..., :2]
+    # b_w = anchor_w * exp(tw)
+    # b_h = anchor_h * exp(th)
+    wh_pred = torch.exp(txtytwth_pred[..., 2:]) * anchors[..., 2:]
+
+    # [B, H*W*KA, 4]
+    xywh_pred = torch.cat([xy_pred, wh_pred], -1) * stride
+
+    # 将中心点坐标和宽高换算成边界框的左上角点坐标和右下角点坐标
+    x1y1x2y2_pred = torch.zeros_like(xywh_pred)
+    x1y1x2y2_pred[..., :2] = xywh_pred[..., :2] - xywh_pred[..., 2:] * 0.5
+    x1y1x2y2_pred[..., 2:] = xywh_pred[..., :2] + xywh_pred[..., 2:] * 0.5
+
+    return x1y1x2y2_pred
+
+def create_grid(stride, input_size, anchors):
+    anchors = anchors.clone()
+    w, h = input_size, input_size
+    # 生成G矩阵
+    fmp_w, fmp_h = w // stride, h // stride
+    grid_y, grid_x = torch.meshgrid(
+        [torch.arange(fmp_h), torch.arange(fmp_w)])
+    # [H, W, 2] -> [HW, 2]
+    grid_xy = torch.stack([grid_x, grid_y], dim=-1).float().view(-1, 2)
+    # [HW, 2] -> [HW, 1, 2] -> [HW, KA, 2]
+    grid_xy = grid_xy[:, None, :].repeat(1, len(anchors), 1)
+
+    # [KA, 2] -> [1, KA, 2] -> [HW, KA, 2]
+    anchor_wh = anchors[None, :, :].repeat(fmp_h*fmp_w, 1, 1)
+
+    # [HW, KA, 4] -> [M, 4]
+    anchor_grids = torch.cat([grid_xy, anchor_wh], dim=-1)
+    anchor_grids = anchor_grids.view(-1, 4)
+    return anchor_grids
 
 # We use ignore thresh to decide which anchor box can be kept.
 ignore_thresh = 0.7

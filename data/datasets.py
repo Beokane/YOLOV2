@@ -5,6 +5,12 @@ import xml.etree.ElementTree as ET
 from data.transforms import *
 import os
 
+DETECTION_CLASSES = (  # always index 0
+    'aeroplane', 'bicycle', 'bird', 'boat',
+    'bottle', 'bus', 'car', 'cat', 'chair',
+    'cow', 'diningtable', 'dog', 'horse',
+    'motorbike', 'person', 'pottedplant',
+    'sheep', 'sofa', 'train', 'tvmonitor')
 
 class VOCDetection(torch.utils.data.Dataset):
     """VOC Detection Dataset Object
@@ -131,18 +137,11 @@ class DetectionDataset(torch.utils.data.Dataset):
         self._imgpath = os.path.join('%s', 'JPEGImages', '%s.jpg')
         self.ids = list()
         for year, name in image_sets:
-            rootpath = os.path.join(self.root, 'VOC' + year)
+            rootpath = os.path.join(os.getcwd(), self.root, 'VOC' + year)
             with open(os.path.join(rootpath, 'ImageSets', 'Main', name + '.txt'), 'r') as f:
                 for line in f:
-                    self.ids.append((rootpath, line.strip()))
-        file_list = os.listdir(os.path.join(rootpath, 'ImageSets', 'Main'))
-        self.class_names = {'background'}  # always index 0
-        for file in file_list:
-            filename = os.path.basename(file)
-            if filename.endswith('.txt') and filename.find('_') != -1:
-                class_name = filename.split('_')[0]
-                self.class_names.add(class_name)
-        self.target_transform.set_class(self.class_names)
+                    self.ids.append((rootpath, line.strip()))       
+        self.target_transform.set_class(DETECTION_CLASSES)
         
 
     def __len__(self):

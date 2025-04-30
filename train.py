@@ -1,15 +1,19 @@
+import os
+from tqdm import tqdm
 import torch
-from models.matcher import  *
+import torch.optim as optim
+from argparse import ArgumentParser
+
 from data.datasets import *
+from data.transforms import *
 from models.yolov2 import YOLOv2
 from models.loss import Loss
-import config
+from models.postprocess import postprocess
+from models.matcher import *
+from utils.tools import create_grid
+from utils.metrics import calculate_map
+from configs.yolov2_config import yolov2_config
 
-from argparse import ArgumentParser
-import torch.optim as optim
-from tqdm import tqdm
-import os
-from configs.yolov2_config import  yolov2_config
 
 
 def collate_fn(batch):
@@ -53,7 +57,7 @@ def parse_args():
                         help='topk predicted candidates')
 
     # 训练配置
-    parser.add_argument('-bs', '--batch_size', default=8, type=int,
+    parser.add_argument('-bs', '--batch_size', default=16, type=int,
                         help='Batch size for training')
     parser.add_argument('-accu', '--accumulate', default=8, type=int,
                         help='gradient accumulate.')
@@ -71,7 +75,8 @@ def parse_args():
                         help='The upper bound of warm-up')
     parser.add_argument('--lr_epoch', nargs='+', default=[100, 150], type=int,
                         help='lr epoch to decay')
-    parser.add_argument('--input_size', default=416, type=int, help='input_size')
+    parser.add_argument('--input_size', default=416,
+                        type=int, help='input_size')
 
     # 优化器参数
     parser.add_argument('--lr', default=1e-5, type=float,
@@ -107,12 +112,24 @@ def build_dataset(path, train_size, transforms):
     return dataset, num_classes
 
 
-def train(model, config, dataloader, criterion, optimizer):
+def train(model, args, config, dataloader, criterion, optimizer):
     model.train()
     total_loss = 0.0
     with tqdm(dataloader, desc='Training', unit='batch') as pbar:
-        for images, targets in pbar:
-            images = images.to(config['device'])
+        # epoch_size = len(dataloader)
+        for iter_i, (images, targets) in enumerate(pbar):
+            # 训练
+            # ni = iter_i+epoch*epoch_size
+            # if not config['no_warm_up']:
+            #     if epoch < config['wp_epoch']:
+            #         nw = config['wp_epoch']*epoch_size
+            #         tmp_lr = base_lr * pow((ni)*1. / (nw), 4)
+            #         set_lr(optimizer, tmp_lr)
+
+            #     elif epoch == config['wp_epoch'] and iter_i == 0:
+            #         tmp_lr = base_lr
+            #         set_lr(optimizer, tmp_lr)
+            images = images.to(args.device)
             # targets numpy shape (batch_size, box_num, 4+1)
             targets = [label.tolist() for label in targets]
             # targets shape (batch_size, grid_h*grid_w*anchor_num, 1+1+4+1+4）
@@ -122,29 +139,31 @@ def train(model, config, dataloader, criterion, optimizer):
             # 1: box_scale_weight    # 用于平衡正样本和负样本的损失
             # 4: xmin, ymin, xmax, ymax
             targets = gt_creator(
-                input_size=config['train_size'],
+                input_size=args.train_size,
                 stride=config['stride'],
                 label_lists=targets,
-                anchor_size=config['anchor_size'][config['dataset']],
+                anchor_size=config['anchor_size'][args.dataset],
                 ignore_thresh=config['ignore_thresh']
             )
             targets = torch.tensor(
-                targets, dtype=torch.float32).to(config['device'])
+                targets, dtype=torch.float32).to(args.device)
             # 前向传播
             has_nan = torch.isnan(images).any()
             has_inf = torch.isinf(images).any()
 
-            # if has_nan or has_inf:
-            #     print(f"NaN or Inf detected in the input tensor.{has_nan}, {has_inf}")
-            
+            if has_nan or has_inf:
+                print(
+                    f"NaN or Inf detected in the input tensor.{has_nan}, {has_inf}")
+
             outputs = model(images)
             has_nan = torch.isnan(outputs).any()
             has_inf = torch.isinf(outputs).any()
-            # if has_nan or has_inf:
-            #     print(f"NaN or Inf detected in the output tensor. {has_nan}, {has_inf}")
+            if has_nan or has_inf:
+                print(
+                    f"NaN or Inf detected in the output tensor. {has_nan}, {has_inf}")
             loss = criterion(outputs, targets)
             cur_loss = loss.item()
-            total_loss +=  cur_loss
+            total_loss += cur_loss
             # 反向传播
             optimizer.zero_grad()
             loss.backward()
@@ -156,43 +175,43 @@ def train(model, config, dataloader, criterion, optimizer):
     return total_loss
 
 
-def validate(model, config, dataloader, criterion):
+def validate(model, args, config, dataloader):
     model.eval()
     val_map = 0.0
     with torch.no_grad():
         with tqdm(dataloader, desc='Validation', unit='batch') as pbar:
-            for images, targets in pbar:
-                images = images.to(config['device'])
-                targets = [label.tolist() for label in targets]
-                targets = gt_creator(
-                    input_size=config['train_size'],
-                    stride=config['stride'],
-                    label_lists=targets,
-                    anchor_size=config['anchor_size'][config['dataset']],
-                    ignore_thresh=config['ignore_thresh']
-                )
-                targets = torch.tensor(
-                    targets, dtype=torch.float32).to(config['device'])
+            for images, b_targets in pbar:
+                images = images.to(args.device)
+                # print(images.shape)
+                targets = [targets.tolist() for targets in b_targets]
+                # targets = gt_creator(
+                #     input_size=args.train_size,
+                #     stride=config['stride'],
+                #     label_lists=targets,
+                #     anchor_size=config['anchor_size'][args.dataset],
+                #     ignore_thresh=config['ignore_thresh']
+                # )
+                # targets = torch.tensor(
+                #     targets, dtype=torch.float32).to(args.device)
+
                 # 前向传播
                 outputs = model(images)
-                #
-                # 从pred中分离出objectness预测、类别class预测、bbox的txtytwth预测
-                # [B, H*W, KA*C] -> [B, H*W, KA] -> [B, H*W*KA, 1]
-                # conf_pred = outputs[..., :KA].contiguous().view(B, -1, 1)
-                # [B, H*W, KA*C] -> [B, H*W, KA*NC] -> [B, H*W*KA, NC]
-                # cls_pred = outputs[..., 1*KA: (1+NC)*KA].contiguous().view(B, -1, NC)
-                # [B, H*W, KA*C] -> [B, H*W, KA*4] -> [B, H*W, KA, 4]
-                # txtytwth_pred = outputs[..., (1+NC)*KA:].contiguous().view(B, -1, 4)
 
-                # 测试时，笔者默认batch是1，
-                # 因此，我们不需要用batch这个维度，用[0]将其取走。
-                # conf_pred = conf_pred[0]  # [H*W*KA, 1]
-                # cls_pred = cls_pred[0]  # [H*W*KA, NC]
-                # txtytwth_pred = txtytwth_pred[0]  # [H*W*KA, 4]
+                # 分离结果
+                B, H, W, _, C = outputs.shape
+                conf_pred = outputs[..., 0:1].contiguous().view(B, -1, 1)
+                cls_pred = outputs[..., 1: C-4].contiguous().view(B, -1, C-5)
+                txtytwth_pred = outputs[..., C-4:].contiguous().view(B, -1, 4)
+                anchors_size = torch.tensor(config['anchor_size'][args.dataset])
+                anchors = create_grid(config['stride'], args.train_size, anchors_size).to(args.device)
+                # 计算解码边界框的窗格信息
+                result = postprocess(conf_pred, cls_pred, txtytwth_pred, config['stride'], args.train_size,
+                                                     anchors, 0.5, len(DETECTION_CLASSES), 1000)
+                # 计算mAP
+                map = calculate_map(result, targets)
+                
+        return map
 
-                # 后处理
-                # bboxes, scores, labels = postprocess(conf_pred, cls_pred, txtytwth_pred)
-    return 1.0
 
 def check_nan_hook(module, input, output):
     if torch.is_tensor(output):
@@ -201,83 +220,79 @@ def check_nan_hook(module, input, output):
     elif isinstance(output, (tuple, list)):
         for o in output:
             if torch.is_tensor(o) and torch.isnan(o).any():
-                print(f'[NaN Warning] {module.__class__.__name__} output has NaN!')
+                print(
+                    f'[NaN Warning] {module.__class__.__name__} output has NaN!')
 
-def set_lr(optimizer, lr):
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+# def set_lr(optimizer, lr):
+#     for param_group in optimizer.param_groups:
+#         param_group['lr'] = lr
+
 
 def main():
     # 加载配置
     args = parse_args()
-    cfg = yolov2_config[args.version]
-    configs = {**cfg, **vars(args)}
-    print(configs.keys())
+    model_config = yolov2_config[args.version]
+    # configs = {**cfg, **vars(args)}
 
     # 是否使用cuda
-    configs['device'] = torch.device(
-        'cuda' if torch.cuda.is_available() and configs['cuda'] else 'cpu')
+    args.device = torch.device(
+        'cuda' if torch.cuda.is_available() and args.cuda else 'cpu')
 
     # 多尺度训练
-    configs['train_size'], configs['val_size'] = (640, 416) if configs['multi_scale'] else (416, 416)
+    args.train_size, args.val_size = (
+        640, 416) if args.multi_scale else (416, 416)
     # 数据预处理
-    transform = Augmentation(configs['train_size'])
+    transform = Augmentation(args.train_size)
 
     # 数据加载
     train_dataset = DetectionDataset(
-        '/home/oem/MachineLearning/detect/datasets/VOCdevkit', configs['train_size'], [('2012', 'train')], transform)
+        'datasets/VOCdevkit', args.train_size, [('2012', 'train')], transform)
     val_dataset = DetectionDataset(
-        '/home/oem/MachineLearning/detect/datasets/VOCdevkit', configs['val_size'], [('2012', 'val')], transform)
+        'datasets/VOCdevkit', args.val_size, [('2012', 'val')], transform)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=configs['batch_size'],
+        batch_size=args.batch_size,
         shuffle=True,
         collate_fn=collate_fn,
-        num_workers=configs['num_workers'],
+        num_workers=args.num_workers,
         pin_memory=True
     )
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=configs['batch_size'],
+        batch_size=args.batch_size,
         shuffle=True,
         collate_fn=collate_fn,
-        num_workers=configs['num_workers'],
+        num_workers=args.num_workers,
         pin_memory=True
     )
 
     # 模型构建
-    model = YOLOv2(configs)
-    model = model.to(configs['device'])
+    model = YOLOv2(model_config)
+    model = model.to(args.device)
 
     for name, module in model.named_modules():
         module.register_forward_hook(check_nan_hook)
 
     # 优化器构建
-    optimizer = optim.Adam(model.parameters(), lr=configs['lr'], weight_decay=configs['weight_decay'])
+    optimizer = optim.Adam(model.parameters(), lr=args.lr,
+                           weight_decay=args.weight_decay)
 
     # 损失函数
-    criterion = Loss(configs)
+    anchors = torch.tensor(model_config['anchor_size'][args.dataset])
+    criterion = Loss(args, model_config['stride'], anchors)
 
     # 训练
     best_mAP = 0.0
-    for epoch in range(configs['start_epoch'], configs['max_epoch']):
-        # 训练
-        if not configs['no_warm_up']:
-                if epoch < configs['wp_epoch']:
-                    nw = args['wp_epoch']*epoch_size
-                    tmp_lr = base_lr * pow((ni)*1. / (nw), 4)
-                    set_lr(optimizer, tmp_lr)
-
-                elif epoch == args.wp_epoch and iter_i == 0:
-                    tmp_lr = base_lr
-                    set_lr(optimizer, tmp_lr)
-        train_loss = train(model, configs, train_dataloader, criterion, optimizer)
+    for epoch in range(args.start_epoch, args.max_epoch):
+        train_loss = train(model, args, model_config,
+                           train_dataloader, criterion, optimizer)
+        # train_loss = 0.0
         # 验证
-        mAP = validate(model, configs, val_dataloader, criterion)
-        print(
-            f"Epoch {epoch+1}/{configs['max_epoch']}, Loss: {train_loss:.4f}, mAP: {mAP:.4f}")
+        mAP = validate(model, args, model_config, val_dataloader)
+        print(f"Epoch {epoch+1}/{args.max_epoch}, Loss: {train_loss:.4f}, mAP: {mAP:.4f}")
+        # print(f"Epoch {epoch+1}/{args.max_epoch}, Loss: {train_loss:.4f}")
         # 保存最好的模型
-        if mAP > best_mAP:
+        if mAP >= best_mAP:
             best_mAP = mAP
             torch.save(model.state_dict(), f"best_model.pth")
             print(f"Best model saved with mAP: {best_mAP:.4f}")

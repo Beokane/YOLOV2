@@ -1,11 +1,13 @@
 import torch
 import numpy as np
+from sklearn.metrics import auc
 
 def iou_score(bboxes_a, bboxes_b):
     """
         bbox_1 : [B*N, 4] = [x1, y1, x2, y2]
         bbox_2 : [B*N, 4] = [x1, y1, x2, y2]
     """
+    eps = 1e-6
     tl = torch.max(bboxes_a[:, :2], bboxes_b[:, :2])
     br = torch.min(bboxes_a[:, 2:], bboxes_b[:, 2:])
     area_a = torch.prod(bboxes_a[:, 2:] - bboxes_a[:, :2], 1)
@@ -13,7 +15,70 @@ def iou_score(bboxes_a, bboxes_b):
 
     en = (tl < br).type(tl.type()).prod(dim=1)
     area_i = torch.prod(br - tl, 1) * en  # * ((tl < br).all())
-    return area_i / (area_a + area_b - area_i)
+    return area_i / (area_a + area_b - area_i + eps)
+
+def calculate_map(preds, targets, iou_threshold=0.01):
+    batch_size = len(preds)
+    aps = []
+
+    for i in range(batch_size):
+        preds_b = preds[i]
+        gts_b = targets[i]
+
+        preds_b = sorted(preds_b, key=lambda x: x[0], reverse=True)  # 按置信度排序
+        # print(f'preds_b {preds_b}')
+        tp = np.zeros(len(preds_b))
+        fp = np.zeros(len(preds_b))
+        gt_matched = set()
+
+        for pred_idx, pred in enumerate(preds_b):
+            pred_conf, pred_cls, pred_x1, pred_y1, pred_x2, pred_y2 = pred
+            best_iou = 0
+            best_gt_idx = -1
+
+            for gt_idx, gt in enumerate(gts_b):
+                gt_cls, gt_x1, gt_y1, gt_x2, gt_y2 = gt
+
+                if pred_cls != gt_cls:
+                    continue
+
+                iou = iou_score(
+                    torch.tensor([pred_x1, pred_y1, pred_x2, pred_y2]),
+                    torch.tensor([gt_x1, gt_y1, gt_x2, gt_y2])
+                )
+
+                if iou > best_iou:
+                    best_iou = iou
+                    best_gt_idx = gt_idx
+
+            if best_iou >= iou_threshold and best_gt_idx not in gt_matched:
+                tp[pred_idx] = 1
+                gt_matched.add(best_gt_idx)
+            else:
+                fp[pred_idx] = 1
+
+        tp_cumsum = np.cumsum(tp)
+        fp_cumsum = np.cumsum(fp)
+
+        precision = tp_cumsum / (tp_cumsum + fp_cumsum + 1e-6)
+        recall = tp_cumsum / (len(gts_b) + 1e-6)
+
+        # print(f'tp_cumsum {tp_cumsum}, fp_cumsum {fp_cumsum}')
+
+        # 修正顺序
+        if len(recall) > 0 and len(precision) > 0:
+            mrec = np.concatenate(([0.0], recall, [1.0]))
+            mpre = np.concatenate(([0.0], precision, [0.0]))
+            for i in range(len(mpre) - 1, 0, -1):
+                mpre[i - 1] = max(mpre[i - 1], mpre[i])
+            idx = np.where(mrec[1:] != mrec[:-1])[0]
+            ap = np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1])
+        else:
+            ap = 0.0
+
+        aps.append(ap)
+
+    return np.mean(aps) if aps else 0.0
 
 class DetectionMetrics:
     def __init__(self, iou_threshold=0.5):
