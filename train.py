@@ -61,7 +61,7 @@ def parse_args():
                         help='Batch size for training')
     parser.add_argument('-accu', '--accumulate', default=8, type=int,
                         help='gradient accumulate.')
-    parser.add_argument('-no_wp', '--no_warm_up', action='store_true', default=False,
+    parser.add_argument('-no_wp', '--no_warm_up', action='store_true', default=True,
                         help='yes or no to choose using warmup strategy to train')
     parser.add_argument('--wp_epoch', type=int, default=1,
                         help='The upper bound of warm-up')
@@ -177,29 +177,36 @@ def train(model, args, config, dataloader, criterion, optimizer):
 
 def validate(model, args, config, dataloader):
     model.eval()
-    val_map = 0.0
+    all_preds = []
+    all_targets = []
     with torch.no_grad():
         with tqdm(dataloader, desc='Validation', unit='batch') as pbar:
-            for images, b_targets in pbar:
-                images = images.to(args.device)
+            for i, (b_images, b_targets) in enumerate(pbar):
+                b_images = b_images.to(args.device)
                 targets = [targets.tolist() for targets in b_targets]
                 # 前向传播
-                outputs = model(images)
+                outputs = model(b_images)
                 # 分离结果
                 B, H, W, _, C = outputs.shape
                 conf_pred = outputs[..., 0:1].contiguous().view(B, -1, 1)
                 cls_pred = outputs[..., 1: C-4].contiguous().view(B, -1, C-5)
                 txtytwth_pred = outputs[..., C-4:].contiguous().view(B, -1, 4)
-
+                # anchors 是每个先验框 
                 anchors_size = torch.tensor(config['anchor_size'][args.dataset])
                 anchors = create_grid(config['stride'], args.train_size, anchors_size).to(args.device)
-            
                 # 计算解码边界框的窗格信息
                 result = postprocess(conf_pred, cls_pred, txtytwth_pred, config['stride'], args.train_size,
-                                                     anchors, 0.5, len(DETECTION_CLASSES), 1000)
+                                                     anchors, 0.001, len(DETECTION_CLASSES), 1000)
+                
+                for b_idx, dets in enumerate(result):  # 遍历当前 batch 中每张图片的结果
+                    for det in dets:
+                        all_preds.append([i * B + b_idx] + det.tolist())  # [image_id, class_id, conf, x1, y1, x2, y2]
+                for b_idx, target in enumerate(targets):  # target: [[class_id, x1, y1, x2, y2], ...]
+                    for t in target:
+                        all_targets.append([i * B + b_idx] + t[-1:] + t[:-1])  # [image_id, class_id, x1, y1, x2, y2]
                 # 计算mAP
-                map = calculate_map(result, targets)
-        return map
+    map = calculate_map(all_preds, all_targets)
+    return map
 
 def check_nan_hook(module, input, output):
     if torch.is_tensor(output):

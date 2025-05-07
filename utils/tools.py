@@ -11,7 +11,7 @@ def nms(bboxes, scores, nms_thresh=0.50):
     y1 = bboxes[:, 1]  #ymin
     x2 = bboxes[:, 2]  #xmax
     y2 = bboxes[:, 3]  #ymax
-
+    # print(f'x1 {x1}, y1 {y1}, x2 {x2}, y2 {y2}')
     areas = (x2 - x1) * (y2 - y1)
     order = scores.argsort()[::-1]
     
@@ -61,6 +61,8 @@ def decode_boxes(stride, anchors, txtytwth_pred):
     x1y1x2y2_pred[..., :2] = xywh_pred[..., :2] - xywh_pred[..., 2:] * 0.5
     x1y1x2y2_pred[..., 2:] = xywh_pred[..., :2] + xywh_pred[..., 2:] * 0.5
 
+    x1y1x2y2_pred = torch.clamp(x1y1x2y2_pred[..., :], min=1e-4, max=415-1e-4)
+
     return x1y1x2y2_pred
 
 def create_grid(stride, input_size, anchors_size):
@@ -78,7 +80,7 @@ def create_grid(stride, input_size, anchors_size):
     w, h = input_size, input_size
     # 生成G矩阵
     fmp_w, fmp_h = w // stride, h // stride
-    grid_y, grid_x = torch.meshgrid([torch.arange(fmp_h), torch.arange(fmp_w)])  # [H, W]
+    grid_y, grid_x = torch.meshgrid([torch.arange(fmp_h), torch.arange(fmp_w)], indexing='ij')  # [H, W]
     grid_xy = torch.stack([grid_x, grid_y], dim=-1).float().view(-1, 2)  # [H, W, 2]->[HW, 2]
     grid_xy = grid_xy[:, None, :].repeat(1, len(cur_anchors_size), 1)    # [HW, 2]->[HW, 1, 2]->[HW, KA, 2]
     anchor_wh = cur_anchors_size[None, :, :].repeat(fmp_h*fmp_w, 1, 1)  # [KA, 2]->[1, KA, 2]->[HW, KA, 2]

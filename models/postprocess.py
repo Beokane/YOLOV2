@@ -6,9 +6,9 @@ from utils.tools import decode_boxes, nms
 def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf_thresh, num_classes, topk):
     """
     Input:
-        conf_pred: (Tensor) [H*W*KA, 1]
-        cls_pred:  (Tensor) [H*W*KA, C]
-        reg_pred:  (Tensor) [H*W*KA, 4]
+        conf_pred: (Tensor) [B, H*W*KA, 1]
+        cls_pred:  (Tensor) [B, H*W*KA, C]
+        reg_pred:  (Tensor) [B, H*W*KA, 4]
         anchors:   (Tensor) [H*W*KA, 4]
     """
     # print(anchors.shape)
@@ -19,6 +19,7 @@ def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf
         conf_b = conf_pred[i].clone()
         cls_b = cls_pred[i].clone()
         reg_b = reg_pred[i].clone()
+        # softmax 是对每个样本的每个类别的概率进行归一化，一般适用于多类别互斥任务。[H*W*KA, C]
         scores = (torch.sigmoid(conf_b) * torch.softmax(cls_b, dim=-1)).flatten()
 
         # Keep top k top scoring indices only.
@@ -30,6 +31,7 @@ def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf
         topk_idxs = topk_idxs[:num_topk]
 
         # filter out the proposals with low confidence score
+        # keep_idxs = topk_scores > conf_thresh 说明是多标签
         keep_idxs = topk_scores > conf_thresh
         scores = topk_scores[keep_idxs]
         topk_idxs = topk_idxs[keep_idxs]
@@ -68,6 +70,7 @@ def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf
         bboxes = bboxes / input_size
         bboxes = np.clip(bboxes, 0., 1.)
         result = np.concatenate([scores[:, np.newaxis], labels[:, np.newaxis], bboxes], axis=1)
+        result = np.concatenate([labels[:, np.newaxis], scores[:, np.newaxis], bboxes], axis=1)
         results.append(result)
 
     return results

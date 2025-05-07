@@ -64,6 +64,10 @@ def set_anchors(anchor_size):
     return anchor_boxes
 
 def generate_txtytwth(gt_label, w, h, s, anchor_size, ignore_thresh):
+    '''
+    在真实框所在的窗格内，将先验框标记为正样本和忽略样本。
+    负样本默认在没有真实框出现的网格上(因为初始化的时候都是0)
+    '''
     # gt_label: [xmin, ymin, xmax, ymax, class_id]
     xmin, ymin, xmax, ymax = gt_label[:-1]
     # 计算真实边界框的中心点和宽高
@@ -146,6 +150,7 @@ def gt_creator(input_size, stride, label_lists, anchor_size, ignore_thresh):
 
     # 制作正样本
     for batch_index in range(batch_size):
+        # 对于没有遍历到的网格，默认其obj标签为0，即背景，为负样本。
         for gt_label in label_lists[batch_index]:
             # get a bbox coords
             gt_class = int(gt_label[-1])

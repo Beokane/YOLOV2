@@ -68,7 +68,7 @@ class Loss(nn.Module):
         self.device = args.device
         self.input_size = args.input_size
         self.stride = stride
-        self.anchors = torch.tensor(anchors)
+        self.anchors = anchors.clone()
         self.anchor_grids = create_grid(self.stride, self.input_size, self.anchors).to(self.device)
 
     # def set_grid(self, input_size):
@@ -77,7 +77,7 @@ class Loss(nn.Module):
 
     def forward(self, predictions, targets):
         batch_size, H, W, _, C = predictions.shape
-        # reshape (batch, H, W, B*(5+C)) --> (batch, H, W, B, 5+C)
+        # reshape (batch, H, W, B*(5+C)) --> (batch, HWN, 5+C)
         predictions = predictions.view(batch_size, -1, C)
 
         # 分别取出
