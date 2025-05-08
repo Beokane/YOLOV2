@@ -31,7 +31,6 @@ def collate_fn(batch):
     labels = [torch.as_tensor(label, dtype=torch.float32) for label in labels]
     return images, labels
 
-
 def parse_args():
     parser = ArgumentParser(description='YOLOv2 Training')
     # 基本参数
@@ -61,7 +60,7 @@ def parse_args():
                         help='Batch size for training')
     parser.add_argument('-accu', '--accumulate', default=8, type=int,
                         help='gradient accumulate.')
-    parser.add_argument('-no_wp', '--no_warm_up', action='store_true', default=True,
+    parser.add_argument('-wp', '--warm_up', action='store_true', default=True,
                         help='yes or no to choose using warmup strategy to train')
     parser.add_argument('--wp_epoch', type=int, default=1,
                         help='The upper bound of warm-up')
@@ -112,23 +111,21 @@ def build_dataset(path, train_size, transforms):
     return dataset, num_classes
 
 
-def train(model, args, config, dataloader, criterion, optimizer):
+def train(model, args, config, dataloader, criterion, optimizer, epoch, base_lr):
     model.train()
     total_loss = 0.0
     with tqdm(dataloader, desc='Training', unit='batch') as pbar:
-        # epoch_size = len(dataloader)
+        epoch_size = len(dataloader)
+        total_iters = args.wp_epoch * epoch_size
         for iter_i, (images, targets) in enumerate(pbar):
-            # 训练
-            # ni = iter_i+epoch*epoch_size
-            # if not config['no_warm_up']:
-            #     if epoch < config['wp_epoch']:
-            #         nw = config['wp_epoch']*epoch_size
-            #         tmp_lr = base_lr * pow((ni)*1. / (nw), 4)
-            #         set_lr(optimizer, tmp_lr)
 
-            #     elif epoch == config['wp_epoch'] and iter_i == 0:
-            #         tmp_lr = base_lr
-            #         set_lr(optimizer, tmp_lr)
+            # 在前期迭代步中，使用warm-up策略来将学习率从0逐渐增加到base_lr
+            iters = iter_i + epoch * epoch_size
+            if args.warm_up and iters <= total_iters:
+                lr = base_lr * pow(iters / total_iters, 4)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr
+
             images = images.to(args.device)
             # targets numpy shape (batch_size, box_num, 4+1)
             targets = [label.tolist() for label in targets]
@@ -271,6 +268,8 @@ def main():
     # 优化器构建
     optimizer = optim.Adam(model.parameters(), lr=args.lr,
                            weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.1, patience=5, verbose=True)
 
     # 损失函数
     anchors = torch.tensor(model_config['anchor_size'][args.dataset])
@@ -280,12 +279,12 @@ def main():
     best_mAP = 0.0
     for epoch in range(args.start_epoch, args.max_epoch):
         train_loss = train(model, args, model_config,
-                           train_dataloader, criterion, optimizer)
-        # train_loss = 0.0
+                           train_dataloader, criterion, optimizer, epoch, args.lr)
         # 验证
         mAP = validate(model, args, model_config, val_dataloader)
         print(f"Epoch {epoch+1}/{args.max_epoch}, Loss: {train_loss:.4f}, mAP: {mAP:.4f}")
         # print(f"Epoch {epoch+1}/{args.max_epoch}, Loss: {train_loss:.4f}")
+        scheduler.step(mAP)
         # 保存最好的模型
         if mAP >= best_mAP:
             best_mAP = mAP
