@@ -38,7 +38,7 @@ def nms(bboxes, scores, nms_thresh=0.50):
 
     return keep
 
-def decode_boxes(stride, anchors, txtytwth_pred):
+def decode_boxes(stride, anchors, input_size, txtytwth_pred):
     """将txtytwth预测换算成边界框的左上角点坐标和右下角点坐标 \n
         Input: \n
             txtytwth_pred : [B, H*W*KA, 4] \n
@@ -61,7 +61,7 @@ def decode_boxes(stride, anchors, txtytwth_pred):
     x1y1x2y2_pred[..., :2] = xywh_pred[..., :2] - xywh_pred[..., 2:] * 0.5
     x1y1x2y2_pred[..., 2:] = xywh_pred[..., :2] + xywh_pred[..., 2:] * 0.5
 
-    x1y1x2y2_pred = torch.clamp(x1y1x2y2_pred[..., :], min=1e-4, max=415-1e-4)
+    x1y1x2y2_pred = torch.clamp(x1y1x2y2_pred[..., :], min=1e-4, max=input_size-1e-4)
 
     return x1y1x2y2_pred
 

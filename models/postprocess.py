@@ -117,7 +117,7 @@ def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf
         cur_anchors = cur_anchors[anchor_idxs]
 
         # 解算边界框, 并归一化边界框: [n, 4]
-        bboxes = decode_boxes(stride, cur_anchors, reg_b)
+        bboxes = decode_boxes(stride, cur_anchors, input_size, reg_b)
 
         # to cpu
         scores = keep_scores.cpu().numpy()
@@ -143,7 +143,7 @@ def postprocess(conf_pred, cls_pred, reg_pred, stride, input_size, anchors, conf
         # 归一化边界框
         bboxes = bboxes / input_size
         bboxes = np.clip(bboxes, 0., 1.)
-        result = np.concatenate([scores[:, np.newaxis], labels[:, np.newaxis], bboxes], axis=1)
+        # result = np.concatenate([scores[:, np.newaxis], labels[:, np.newaxis], bboxes], axis=1)
         result = np.concatenate([labels[:, np.newaxis], scores[:, np.newaxis], bboxes], axis=1)
         results.append(result)
 

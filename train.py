@@ -60,7 +60,7 @@ def parse_args():
                         help='Batch size for training')
     parser.add_argument('-accu', '--accumulate', default=8, type=int,
                         help='gradient accumulate.')
-    parser.add_argument('-wp', '--warm_up', action='store_true', default=True,
+    parser.add_argument('-wp', '--warm_up', action='store_true', default=False,
                         help='yes or no to choose using warmup strategy to train')
     parser.add_argument('--wp_epoch', type=int, default=1,
                         help='The upper bound of warm-up')
@@ -78,7 +78,7 @@ def parse_args():
                         type=int, help='input_size')
 
     # 优化器参数
-    parser.add_argument('--lr', default=1e-5, type=float,
+    parser.add_argument('--lr', default=1e-4, type=float,
                         help='initial learning rate')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='Momentum value for optim')
@@ -238,9 +238,9 @@ def main():
 
     # 数据加载
     train_dataset = DetectionDataset(
-        'datasets/VOCdevkit', args.train_size, [('2012', 'train')], transform)
+        'datasets/VOCdevkit', args.train_size, [('2012', 'trainval')], transform)
     val_dataset = DetectionDataset(
-        'datasets/VOCdevkit', args.val_size, [('2012', 'val')], transform)
+        'datasets/VOCdevkit', args.val_size, [('2007', 'test')], transform)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -266,8 +266,10 @@ def main():
         module.register_forward_hook(check_nan_hook)
 
     # 优化器构建
-    optimizer = optim.Adam(model.parameters(), lr=args.lr,
-                           weight_decay=args.weight_decay)
+    # optimizer = optim.Adam(model.parameters(), lr=args.lr,
+    #                        weight_decay=args.weight_decay)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr,
+                          momentum=args.momentum, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.1, patience=5, verbose=True)
 

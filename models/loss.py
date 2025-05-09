@@ -87,7 +87,7 @@ class Loss(nn.Module):
         pred_cls = predictions[..., 1:C-4].contiguous().view(batch_size, -1, C - 5)   # classes
         pred_box_xywh = predictions[..., C-4:].contiguous().view(batch_size, -1, 4)  # (x, y, w, h) 
         # 计算iou_scores
-        box_xyxy_pred = (decode_boxes(self.stride, self.anchor_grids, pred_box_xywh) / self.input_size).view(-1, 4)
+        box_xyxy_pred = (decode_boxes(self.stride, self.anchor_grids, self.input_size, pred_box_xywh) / self.input_size).view(-1, 4)
         box_xyxy_gt = targets[:, :, 7:].contiguous().view(-1, 4)
         iou_scores = iou_score(box_xyxy_pred, box_xyxy_gt).contiguous().view(batch_size, -1, 1)
         with torch.no_grad():
